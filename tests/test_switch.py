@@ -9,7 +9,7 @@ from collections import OrderedDict
 from copy import deepcopy
 from random import randint
 from typing import Any
-from unittest.mock import Mock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import homeassistant.util.dt as dt_util
 import pytest
@@ -2913,4 +2913,104 @@ async def test_adapt_only_on_bare_turn_on_respects_pause_changed_mode(hass, inte
         f"Bug: Color was not adapted. last_service_data={last_service_data}. "
         f"With take_over_control_mode=PAUSE_CHANGED and only brightness marked "
         f"as manually controlled, color_temp should still be adapted."
+    )
+
+
+async def test_detect_non_ha_changes_with_separate_turn_on_commands(hass):
+    """Regression test: detect_non_ha_changes must work with separate_turn_on_commands.
+
+    End-to-end scenario: an IKEA RODRET (or similar) switch is directly bound to a
+    Zigbee bulb.  When the user adjusts brightness on the knob, the bulb changes
+    immediately via Zigbee — no HA service call is made.  ZHA later reports the new
+    brightness to HA via an attribute report (async_update_entity).
+
+    Expected behaviour: on the next AL adaptation interval AL notices the brightness
+    differs from what it last set, marks the light as manually controlled, and does
+    NOT override the user's brightness.
+
+    Buggy behaviour (before fix): AL re-adapts the light every interval and overrides
+    the manually set brightness — exactly what the user observed.
+
+    Root cause: with separate_turn_on_commands=True each cycle makes two light.turn_on
+    calls (brightness, then color).  The second call overwrote last_service_data,
+    dropping brightness.  _attributes_have_changed then saw old_brightness=None and
+    silently skipped the comparison, so the manual change was never detected.
+
+    Fix: merge rather than overwrite last_service_data so brightness survives both
+    split calls and the comparison runs correctly.
+    """
+    switch, (light, *_) = await setup_lights_and_switch(
+        hass,
+        {
+            CONF_SEPARATE_TURN_ON_COMMANDS: True,
+            CONF_DETECT_NON_HA_CHANGES: True,
+            CONF_TAKE_OVER_CONTROL: True,
+        },
+    )
+
+    context = switch.create_context("test")
+
+    async def update(force: bool = False):
+        await switch._update_attrs_and_maybe_adapt_lights(
+            context=context,
+            force=force,
+            transition=0,
+        )
+        await hass.async_block_till_done()
+
+    # 1. Let AL adapt the light — produces two split light.turn_on calls and
+    #    populates last_service_data.
+    await update(force=True)
+
+    al_brightness = light._brightness  # brightness AL just set
+
+    # Reset manual control so the detect_non_ha_changes path starts clean.
+    switch.manager.manual_control[ENTITY_LIGHT_1] = LightControlAttributes.NONE
+
+    # 2. Simulate the Zigbee device directly changing brightness on the bulb.
+    #    In the real scenario the RODRET sends a Zigbee Level Control command
+    #    directly to the bulb with no HA service call; ZHA then receives the
+    #    attribute report and updates the entity state via async_update_entity.
+    #
+    #    significant_change() calls async_update_entity() so the entity's own
+    #    update method runs before the state is read.  For these mock template
+    #    lights that re-evaluates the template and would reset brightness back
+    #    to whatever AL last set.  We patch async_update_entity to instead just
+    #    flush _brightness to HA state — exactly what a real ZHA entity does
+    #    when it reports new hardware state from a Zigbee attribute report.
+    manual_brightness = (
+        al_brightness - 120 if al_brightness >= 120 else al_brightness + 120
+    )
+    light._brightness = manual_brightness
+
+    async def _flush_attr_state(hass, entity_id):
+        """Write current _brightness to HA state (mimics ZHA attribute report)."""
+        light.async_write_ha_state()
+
+    with patch(
+        "homeassistant.components.adaptive_lighting.switch.async_update_entity",
+        new=AsyncMock(side_effect=_flush_attr_state),
+    ):
+        # 3. First AL interval: detect_non_ha_changes compares current state against
+        #    last_service_data.  With the fix, brightness is present and the large
+        #    delta is detected → manual_control is set.  Without the fix, brightness
+        #    is absent → comparison skipped → manual_control stays NONE.
+        await update(force=False)
+
+        # 4. Second AL interval: this is what the user actually sees.
+        #    With the fix: AL respects manual_control and does NOT send turn_on →
+        #      light._brightness stays at manual_brightness.
+        #    Without the fix: manual_control is NONE → AL re-adapts → sends
+        #      turn_on(brightness=al_brightness) → light goes back to al_brightness.
+        #      This is the override the user observed.
+        await update(force=False)
+
+    assert light._brightness == manual_brightness, (
+        f"AL overrode the manually set brightness ({manual_brightness}) with its "
+        f"own target ({al_brightness}). "
+        f"The user's direct-Zigbee brightness change was not respected. "
+        f"Likely cause: last_service_data is missing brightness after "
+        f"separate_turn_on_commands split calls, so _attributes_have_changed skipped "
+        f"the comparison and manual_control was never set. "
+        f"last_service_data={switch.manager.last_service_data.get(ENTITY_LIGHT_1)}"
     )

@@ -2967,12 +2967,12 @@ async def test_detect_non_ha_changes_with_separate_turn_on_commands(hass):
     # last_service_data would contain only color_temp at this point.
     last_sd = switch.manager.last_service_data.get(ENTITY_LIGHT_1)
     assert last_sd is not None, "last_service_data not populated after force adapt"
-    assert ATTR_BRIGHTNESS in last_sd, (
-        f"brightness missing from last_service_data after split calls: {last_sd}"
-    )
-    assert ATTR_COLOR_TEMP_KELVIN in last_sd or ATTR_RGB_COLOR in last_sd, (
-        f"color missing from last_service_data after split calls: {last_sd}"
-    )
+    assert (
+        ATTR_BRIGHTNESS in last_sd
+    ), f"brightness missing from last_service_data after split calls: {last_sd}"
+    assert (
+        ATTR_COLOR_TEMP_KELVIN in last_sd or ATTR_RGB_COLOR in last_sd
+    ), f"color missing from last_service_data after split calls: {last_sd}"
 
     al_brightness = light._brightness  # brightness AL just set
 
@@ -3010,7 +3010,8 @@ async def test_detect_non_ha_changes_with_separate_turn_on_commands(hass):
         await update(force=False)
 
         assert LightControlAttributes.BRIGHTNESS in switch.manager.manual_control.get(
-            ENTITY_LIGHT_1, LightControlAttributes.NONE
+            ENTITY_LIGHT_1,
+            LightControlAttributes.NONE,
         ), (
             f"Expected brightness to be marked as manually controlled after the "
             f"Zigbee direct-change was simulated, but manual_control="

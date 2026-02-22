@@ -2947,7 +2947,7 @@ async def test_detect_non_ha_changes_with_separate_turn_on_commands(hass):
     await update(force=True)
 
     last_sd = switch.manager.last_service_data.get(ENTITY_LIGHT_1)
-    assert last_sd is not None
+    assert last_sd is not None, "last_service_data not set after force adapt"
     assert (
         ATTR_BRIGHTNESS in last_sd
     ), f"brightness missing from last_service_data after split calls: {last_sd}"

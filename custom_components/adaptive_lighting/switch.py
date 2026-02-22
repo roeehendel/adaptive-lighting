@@ -1356,10 +1356,6 @@ class AdaptiveSwitch(SwitchEntity, RestoreEntity):
                 data.context.id,
             )
             light = service_data[ATTR_ENTITY_ID]
-            # Merge rather than overwrite so that split calls (separate_turn_on_commands)
-            # accumulate all adapted attributes. Without this, the last split call
-            # (e.g. color) overwrites the first (e.g. brightness), causing
-            # detect_non_ha_changes to miss manual brightness changes entirely.
             self.manager.last_service_data[light] = {
                 **self.manager.last_service_data.get(light, {}),
                 **service_data,

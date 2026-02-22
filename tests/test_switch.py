@@ -2983,6 +2983,6 @@ async def test_detect_non_ha_changes_with_separate_turn_on_commands(hass):
 
         await update(force=False)
 
-    assert light._brightness == manual_brightness, (
-        f"AL overrode manual brightness {manual_brightness} with {al_brightness}"
-    )
+    assert (
+        light._brightness == manual_brightness
+    ), f"AL overrode manual brightness {manual_brightness} with {al_brightness}"
